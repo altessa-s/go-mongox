@@ -5,10 +5,11 @@
 package keyset_test
 
 import (
+	"bytes"
 	"errors"
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"github.com/altessa-s/go-aip/pagination/pagetoken"
@@ -32,12 +33,26 @@ func TestFindPage_UsesTheSigner(t *testing.T) {
 	boom := errors.New("signer returned token contents")
 
 	_, err := keyset.FindPage[bson.M](t.Context(), nil, tokenCodecFake{err: boom}, keyset.Query{After: "token"})
-	if !errors.Is(err, boom) || strings.Contains(err.Error(), boom.Error()) {
-		t.Fatalf("got %v, want %v", err, boom)
-	}
+	require.ErrorIs(t, err, boom)
+	require.NotContains(t, err.Error(), boom.Error())
 
 	_, err = keyset.FindPage[bson.M](t.Context(), nil, (*pagetoken.Codec)(nil), keyset.Query{After: "token"})
-	if !errors.Is(err, keyset.ErrTokensRequired) || !errors.Is(err, pagetoken.ErrCodecRequired) || pagetoken.Classify(err) != pagetoken.FailureMalformed {
-		t.Fatalf("got %v, want %v", err, keyset.ErrTokensRequired)
-	}
+	require.ErrorIs(t, err, keyset.ErrTokensRequired)
+	require.ErrorIs(t, err, pagetoken.ErrCodecRequired)
+	require.Equal(t, pagetoken.FailureMalformed, pagetoken.Classify(err))
+}
+
+func TestFindPageRejectsTokenWithoutCodec(t *testing.T) {
+	t.Parallel()
+
+	codec, err := pagetoken.New(bytes.Repeat([]byte{1}, pagetoken.MinKeyLength))
+	require.NoError(t, err)
+
+	token, err := codec.Issue([]byte("x"), pagetoken.Bindings{})
+	require.NoError(t, err)
+
+	_, err = keyset.FindPage[bson.M](t.Context(), nil, nil, keyset.Query{After: token})
+	require.ErrorIs(t, err, keyset.ErrTokensRequired)
+	require.ErrorIs(t, err, pagetoken.ErrCodecRequired)
+	require.Equal(t, pagetoken.FailureMalformed, pagetoken.Classify(err))
 }

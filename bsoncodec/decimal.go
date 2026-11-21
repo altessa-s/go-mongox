@@ -23,11 +23,11 @@ import (
 // go-aip/decimal128.Fits accepts, in the form decimal128.Canonical returns;
 // validate input with decimal128.Fits to refuse a value before it reaches the
 // store.
-var ErrDecimalOutOfRange = errors.New("mongo: decimal not representable as Decimal128")
+var ErrDecimalOutOfRange = errors.New("bsoncodec: decimal not representable as Decimal128")
 
 // ErrDecimalNotFinite is returned when a stored Decimal128 is NaN or an
 // infinity, which decimal.Decimal cannot hold.
-var ErrDecimalNotFinite = errors.New("mongo: Decimal128 is not a finite number")
+var ErrDecimalNotFinite = errors.New("bsoncodec: Decimal128 is not a finite number")
 
 var (
 	decimalType        = reflect.TypeFor[decimal.Decimal]()
@@ -153,7 +153,7 @@ func readDecimal(vr bson.ValueReader) (decimal.Decimal, error) {
 
 		return decimal.NewFromInt(i), nil
 	default:
-		return decimal.Decimal{}, fmt.Errorf("mongo: cannot decode %v into a decimal", t)
+		return decimal.Decimal{}, fmt.Errorf("bsoncodec: cannot decode %v into a decimal", t)
 	}
 }
 

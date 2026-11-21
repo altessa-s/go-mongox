@@ -7,6 +7,7 @@ package bsonbound
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -147,5 +148,36 @@ func TestBoundedWriterRefusesDeepNesting(t *testing.T) {
 	_, _, err := encodeBounded(t, bson.D{{Key: "v", Value: deep}}, filtereval.MaxDocumentBytes)
 	if !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("got %v, want %v", err, ErrLimitExceeded)
+	}
+}
+
+func TestDecimalDigits(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{0, 1, 9, 10, 99, 100, 999, 1000, 99_999, 100_000, 1<<31 - 1} {
+		if got, want := decimalDigits(n), len(strconv.Itoa(n)); got != want {
+			t.Fatalf("decimalDigits(%d) = %d, want %d", n, got, want)
+		}
+	}
+}
+
+// TestLargeArraySize checks that the bound counts the keys of an array with indexes of several digits as the driver writes them.
+func TestLargeArraySize(t *testing.T) {
+	t.Parallel()
+
+	values := make(bson.A, 1234)
+	for i := range values {
+		values[i] = int32(i)
+	}
+
+	doc := bson.D{{Key: "a", Value: values}}
+
+	buf, bound, err := encodeBounded(t, doc, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bound.Size() != buf.Len() {
+		t.Fatalf("bound size %d, encoded %d bytes", bound.Size(), buf.Len())
 	}
 }

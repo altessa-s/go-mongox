@@ -510,3 +510,29 @@ func (s whereScope) MarshalBSONValue() (byte, []byte, error) {
 	typ, data, err := bson.MarshalValue(bson.D{{Key: "$where", Value: string(s)}})
 	return byte(typ), data, err
 }
+
+// TestRawKeyDenyList pins the invariant rawKey relies on, and that raw BSON refuses every deny-listed operator at any depth.
+func TestRawKeyDenyList(t *testing.T) {
+	t.Parallel()
+
+	for op := range dangerousFilterOperators.Keys() {
+		if !strings.HasPrefix(op, "$") {
+			t.Fatalf("deny-listed operator %q must start with $: rawKey skips any other key", op)
+		}
+
+		raw, err := bson.Marshal(bson.D{{Key: "a", Value: bson.D{{Key: op, Value: "x"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := Validate(t.Context(), bson.Raw(raw), nil); !errors.Is(err, ErrDangerousOperator) {
+			t.Fatalf("raw %s: got %v, want %v", op, err, ErrDangerousOperator)
+		}
+	}
+
+	for _, k := range []string{"", "a", "where", "$gt", "$wher", "$wheree"} {
+		if err := rawKey([]byte(k)); err != nil {
+			t.Fatalf("rawKey(%q) = %v, want nil", k, err)
+		}
+	}
+}

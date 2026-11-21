@@ -7,7 +7,6 @@ package bsonbound
 import (
 	"bytes"
 	"errors"
-	"strconv"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -15,7 +14,7 @@ import (
 )
 
 // ErrLimitExceeded fails an encoding that would exceed its byte limit, its nesting limit or its budget.
-var ErrLimitExceeded = errors.New("mongo: BSON encoding exceeds its limit")
+var ErrLimitExceeded = errors.New("bsonbound: BSON encoding exceeds its limit")
 
 // encodeError keeps custom encoder diagnostics out of messages while preserving the cause.
 type encodeError struct{ cause error }
@@ -341,7 +340,7 @@ type boundedArrayWriter struct {
 }
 
 func (w *boundedArrayWriter) WriteArrayElement() (bson.ValueWriter, error) {
-	if err := w.bound.add(bsonElementBytes + len(strconv.Itoa(w.next))); err != nil {
+	if err := w.bound.add(bsonElementBytes + decimalDigits(w.next)); err != nil {
 		return nil, err
 	}
 
@@ -353,6 +352,17 @@ func (w *boundedArrayWriter) WriteArrayElement() (bson.ValueWriter, error) {
 	w.next++
 
 	return boundedValueWriter{vw: vw, bound: w.bound}, nil
+}
+
+// decimalDigits returns the length of the decimal form of n >= 0, the key of an array element, without formatting it: a
+// formatted index of 100 or more would allocate for every element of a large array.
+func decimalDigits(n int) int {
+	d := 1
+	for ; n >= 10; n /= 10 {
+		d++
+	}
+
+	return d
 }
 
 func (w *boundedArrayWriter) WriteArrayEnd() error {

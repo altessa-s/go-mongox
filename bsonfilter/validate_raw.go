@@ -40,7 +40,7 @@ func (w *filterWalk) rawValue(t bson.Type, data []byte, depth int) error {
 			return err
 		}
 
-		if err := key(string(k)); err != nil {
+		if err := rawKey(k); err != nil {
 			return err
 		}
 
@@ -55,6 +55,16 @@ func (w *filterWalk) rawValue(t bson.Type, data []byte, depth int) error {
 	default:
 		return err
 	}
+}
+
+// rawKey fails for a deny-listed key of raw BSON. Every deny-listed operator starts with "$", so any other key is accepted
+// without converting it to a string, a conversion that would allocate for every key of every filter [Prepare] checks.
+func rawKey(k []byte) error {
+	if len(k) == 0 || k[0] != '$' {
+		return nil
+	}
+
+	return key(string(k))
 }
 
 // admitRawType fails with [ErrValueType] for a raw BSON type a filter must not hold: server-side code (JavaScript, with or without

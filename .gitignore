@@ -5,8 +5,8 @@
 /.mcp.json
 /.claude/
 /.ai-factory*
-!/AGENTS.md
-!/CLAUDE.md
+/AGENTS.md
+/CLAUDE.md
 /CHANGELOG.md
 *_PLAN.md
 /graphify-out/

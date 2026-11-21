@@ -19,11 +19,11 @@ import (
 
 // ErrInvalidDate is returned when a date that is not a valid calendar date
 // in years 0–9999 is encoded, or a stored string is not a YYYY-MM-DD date.
-var ErrInvalidDate = errors.New("mongo: invalid civil date")
+var ErrInvalidDate = errors.New("bsoncodec: invalid civil date")
 
 // ErrNotADateType is returned by [RegisterDateType] for a type without the
 // calendar-date fields.
-var ErrNotADateType = errors.New("mongo: not a calendar date type")
+var ErrNotADateType = errors.New("bsoncodec: not a calendar date type")
 
 // dateLayout is the stored form; its lexical order is the date order.
 const dateLayout = "2006-01-02"
@@ -136,7 +136,21 @@ func (c *dateCodec) encode(_ bson.EncodeContext, vw bson.ValueWriter, v reflect.
 		return ErrInvalidDate
 	}
 
-	return vw.WriteString(fmt.Sprintf("%04d-%02d-%02d", year, int(month), day))
+	return vw.WriteString(formatDate(year, month, day))
+}
+
+// formatDate returns the stored form of a date [validDate] accepts, digit by digit rather than through fmt.
+func formatDate(year int, month time.Month, day int) string {
+	const digits = "0123456789"
+
+	m := int(month)
+	b := [len(dateLayout)]byte{
+		digits[year/1000], digits[year/100%10], digits[year/10%10], digits[year%10], '-',
+		digits[m/10], digits[m%10], '-',
+		digits[day/10], digits[day%10],
+	}
+
+	return string(b[:])
 }
 
 func (c *dateCodec) decode(_ bson.DecodeContext, vr bson.ValueReader, v reflect.Value) error {
@@ -164,8 +178,12 @@ func (c *dateCodec) decode(_ bson.DecodeContext, vr bson.ValueReader, v reflect.
 			return nil
 		}
 
+		if len(s) != len(dateLayout) {
+			return ErrInvalidDate
+		}
+
 		parsed, err := time.Parse(dateLayout, s)
-		if err != nil || len(s) != len(dateLayout) {
+		if err != nil {
 			return ErrInvalidDate
 		}
 
@@ -178,7 +196,7 @@ func (c *dateCodec) decode(_ bson.DecodeContext, vr bson.ValueReader, v reflect.
 
 		return nil
 	default:
-		return fmt.Errorf("mongo: cannot decode %v into a calendar date", t)
+		return fmt.Errorf("bsoncodec: cannot decode %v into a calendar date", t)
 	}
 }
 

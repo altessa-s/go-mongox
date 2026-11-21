@@ -6,8 +6,10 @@ package keyset
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +27,9 @@ import (
 
 const closeTimeout = 5 * time.Second
 
+// idField is the document identity: the default tie-breaker, returned by an inclusion projection unless excluded.
+const idField = "_id"
+
 const (
 	// DefaultPageSize is the page size [FindPage] uses when the query
 	// limit is not positive.
@@ -35,22 +40,29 @@ const (
 
 var (
 	// ErrSort is returned by [FindPage] for a sort it cannot page: a
-	// direction other than 1 or -1, an empty or repeated field.
-	ErrSort = errors.New("mongo: invalid keyset sort")
+	// direction other than 1 or -1, an empty or repeated field, a field
+	// starting with "$" or holding a NUL byte.
+	ErrSort = errors.New("keyset: invalid sort")
 	// ErrMissingKey is returned by [FindPage] when a returned document
-	// lacks a sort field, or holds null or an array there — keyset paging
-	// needs a comparable scalar in every sort field of every document, and
-	// the projection must keep the sort fields.
-	ErrMissingKey = errors.New("mongo: document lacks a keyset sort value")
+	// lacks a sort field, holds null or an array there, or holds a date not
+	// aligned to the timestamp precision — keyset paging needs a comparable
+	// scalar in every sort field of every document.
+	ErrMissingKey = errors.New("keyset: document lacks a sort value")
 	// ErrProjection is returned by [FindPage] for a projection that
-	// computes a sort field or a field containing one: the page position is
-	// read from the returned document and must be the stored value. Plain
-	// inclusion (1, true) and exclusion (0, false) are allowed.
-	ErrProjection = errors.New("mongo: projection rewrites a keyset sort field")
+	// computes a sort field or a field containing one, or that leaves a
+	// sort field out of the returned documents: the page position is read
+	// from the returned document and must be the stored value. An exclusion
+	// must not name a sort field or a field containing one, and an inclusion
+	// must name every sort field or a field containing it ("_id" is
+	// included unless excluded).
+	ErrProjection = errors.New("keyset: projection drops or rewrites a sort field")
+	// ErrPrecision is returned by [FindPage] for a TimestampPrecision that
+	// is negative, below a millisecond or not a whole number of milliseconds.
+	ErrPrecision = errors.New("keyset: invalid timestamp precision")
 	// ErrTokensRequired is returned by [FindPage] for a query with a
 	// page token but no codec. It wraps [pagetoken.ErrCodecRequired], so
 	// [pagetoken.Classify] reports it as a malformed token.
-	ErrTokensRequired = fmt.Errorf("mongo: %w", pagetoken.ErrCodecRequired)
+	ErrTokensRequired = fmt.Errorf("keyset: %w", pagetoken.ErrCodecRequired)
 )
 
 // operationError keeps tokens, filter values and server diagnostics out of the message.
@@ -138,8 +150,10 @@ type sortKey struct {
 // under another filter, sort or principal fails with the [pagetoken] errors. A
 // nil codec reads a single page and issues no Next token; a page token then
 // fails with [ErrTokensRequired]. Every document must hold a comparable
-// scalar of one BSON type in each sort field (see [ErrMissingKey]); an
-// index on the sort fields keeps each page a range scan. Continuation is
+// scalar of one BSON type in each sort field (see [ErrMissingKey]): a document
+// with a null or missing sort value is not skipped, but a page that ends on it
+// fails. A projection that drops a sort field fails with [ErrProjection] before
+// the query. An index on the sort fields keeps each page a range scan. Continuation is
 // keyset-based, not a snapshot: documents inserted ahead of the position
 // appear on later pages. Documents are decoded with the collection's
 // registry; a document that does not decode fails with a [DecodeError].
@@ -154,7 +168,7 @@ func FindPage[T any](ctx context.Context, coll *mongo.Collection, codec pagetoke
 	}
 
 	if q.TimestampPrecision < time.Millisecond || q.TimestampPrecision%time.Millisecond != 0 {
-		return Page[T]{}, fmt.Errorf("%w: invalid timestamp precision", ErrMissingKey)
+		return Page[T]{}, ErrPrecision
 	}
 
 	keys, err := sortKeys(q.Sort, q.TiebreakPath)
@@ -171,10 +185,7 @@ func FindPage[T any](ctx context.Context, coll *mongo.Collection, codec pagetoke
 		return Page[T]{}, err
 	}
 
-	bindings, err := newBindings(filter, keys, q.Subject+"/precision="+q.TimestampPrecision.String())
-	if err != nil {
-		return Page[T]{}, err
-	}
+	bindings := newBindings(filter, keys, q.Subject+"/precision="+q.TimestampPrecision.String())
 
 	predicate := executedFilter(filter)
 
@@ -270,7 +281,7 @@ func FindPage[T any](ctx context.Context, coll *mongo.Collection, codec pagetoke
 // appending that identity ascending when absent.
 func sortKeys(sort bson.D, tiebreakPath string) ([]sortKey, error) {
 	if tiebreakPath == "" {
-		tiebreakPath = "_id"
+		tiebreakPath = idField
 	}
 
 	if strings.HasPrefix(tiebreakPath, "$") || strings.Contains(tiebreakPath, "\x00") {
@@ -281,7 +292,7 @@ func sortKeys(sort bson.D, tiebreakPath string) ([]sortKey, error) {
 
 	seen := make(map[string]struct{}, len(sort))
 	for _, e := range sort {
-		if e.Key == "" || strings.HasPrefix(e.Key, "$") {
+		if e.Key == "" || strings.HasPrefix(e.Key, "$") || strings.Contains(e.Key, "\x00") {
 			return nil, fmt.Errorf("%w: field %q", ErrSort, e.Key)
 		}
 
@@ -306,43 +317,115 @@ func sortKeys(sort bson.D, tiebreakPath string) ([]sortKey, error) {
 	return append(keys, sortKey{field: tiebreakPath}), nil
 }
 
-// checkProjection rejects a projection entry that touches a sort field
-// — the field itself, an ancestor or a descendant of it — with anything but
-// plain inclusion or exclusion ($literal, $slice, $elemMatch, an expression,
-// a positional "field.$").
+// checkProjection rejects a projection that would return a document without the stored value of a sort field: an entry that
+// touches a sort field — the field itself, an ancestor or a descendant of it — with anything but plain inclusion or exclusion
+// ($literal, $slice, $elemMatch, an expression, a positional "field.$"), a plain exclusion of a sort field or of a field
+// containing one, and an inclusion projection that names neither a sort field nor a field containing it. "_id" is returned by
+// an inclusion projection unless it is excluded.
 func checkProjection(projection bson.D, keys []sortKey) error {
 	for _, e := range projection {
 		path := strings.TrimSuffix(e.Key, ".$")
 		for _, k := range keys {
-			related := path == k.field || strings.HasPrefix(k.field, path+".") || strings.HasPrefix(path, k.field+".")
-			if !related {
+			if !isRelatedPath(path, k.field) {
 				continue
 			}
 
-			if path != e.Key || !isPlainProjection(e.Value) {
+			include, plain := plainProjection(e.Value)
+			if path != e.Key || !plain || (!include && (path == k.field || isAncestorPath(path, k.field))) {
 				return fmt.Errorf("%w: %q", ErrProjection, e.Key)
 			}
+		}
+	}
+
+	if !isInclusionProjection(projection) {
+		return nil
+	}
+
+	for _, k := range keys {
+		if k.field == idField || isAncestorPath(idField, k.field) {
+			continue // returned unless excluded, which the loop above refuses
+		}
+
+		if !slices.ContainsFunc(projection, func(e bson.E) bool {
+			include, plain := plainProjection(e.Value)
+
+			return plain && include && (e.Key == k.field || isAncestorPath(e.Key, k.field))
+		}) {
+			return fmt.Errorf("%w: %q not included", ErrProjection, k.field)
 		}
 	}
 
 	return nil
 }
 
-// isPlainProjection reports whether v is a plain inclusion or exclusion.
-func isPlainProjection(v any) bool {
+// isAncestorPath reports whether the dotted path ancestor contains field.
+func isAncestorPath(ancestor, field string) bool { return strings.HasPrefix(field, ancestor+".") }
+
+// isRelatedPath reports whether path is field, an ancestor or a descendant of it.
+func isRelatedPath(path, field string) bool {
+	return path == field || isAncestorPath(path, field) || isAncestorPath(field, path)
+}
+
+// isInclusionProjection reports whether MongoDB returns only the fields projection names: it holds an entry other than "_id"
+// that is not a plain exclusion or a $slice, or holds "_id" alone, included.
+func isInclusionProjection(projection bson.D) bool {
+	others := false
+
+	for _, e := range projection {
+		include, plain := plainProjection(e.Value)
+		if e.Key == idField {
+			continue
+		}
+
+		others = true
+
+		if (plain && include) || (!plain && !isSliceProjection(e.Value)) {
+			return true
+		}
+	}
+
+	if others {
+		return false
+	}
+
+	for _, e := range projection {
+		if include, plain := plainProjection(e.Value); plain && include {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isSliceProjection reports whether v is a {$slice: …} projection, which returns the other fields.
+func isSliceProjection(v any) bool {
 	switch x := v.(type) {
-	case bool:
-		return true
-	case int:
-		return x == 0 || x == 1
-	case int32:
-		return x == 0 || x == 1
-	case int64:
-		return x == 0 || x == 1
-	case float64:
-		return x == 0 || x == 1
+	case bson.D:
+		return len(x) == 1 && x[0].Key == "$slice"
+	case bson.M:
+		_, ok := x["$slice"]
+
+		return ok && len(x) == 1
 	default:
 		return false
+	}
+}
+
+// plainProjection reports whether v is a plain inclusion or exclusion (plain), and which (include).
+func plainProjection(v any) (include, plain bool) {
+	switch x := v.(type) {
+	case bool:
+		return x, true
+	case int:
+		return x == 1, x == 0 || x == 1
+	case int32:
+		return x == 1, x == 0 || x == 1
+	case int64:
+		return x == 1, x == 0 || x == 1
+	case float64:
+		return x == 1, x == 0 || x == 1
+	default:
+		return false, false
 	}
 }
 
@@ -380,7 +463,7 @@ func sortDirection(desc bool) int32 {
 }
 
 // newBindings binds a token to the effective sort, the filter bytes FindPage executes and the subject.
-func newBindings(filter bson.Raw, keys []sortKey, subject string) (pagetoken.Bindings, error) {
+func newBindings(filter bson.Raw, keys []sortKey, subject string) pagetoken.Bindings {
 	var sortFP strings.Builder
 	for _, k := range keys {
 		sortFP.WriteString(strconv.Quote(k.field))
@@ -391,14 +474,30 @@ func newBindings(filter bson.Raw, keys []sortKey, subject string) (pagetoken.Bin
 			sortFP.WriteString(":1;")
 		}
 	}
-	// BSON bytes, not Extended JSON: they keep every type tag, so an int32
-	// and a {"$numberInt": …} document cannot share a fingerprint.
-	filterFP, err := bson.Marshal(bson.D{{Key: "f", Value: filter}})
-	if err != nil {
-		return pagetoken.Bindings{}, fmt.Errorf("mongo: fingerprint page filter: %w", err)
-	}
 
-	return pagetoken.Bindings{Sort: sortFP.String(), Filter: string(filterFP), Subject: subject}, nil
+	return pagetoken.Bindings{Sort: sortFP.String(), Filter: filterFingerprint(filter), Subject: subject}
+}
+
+// filterFingerprint returns the BSON document {"f": filter}, the filter binding of every token issued so far, written around the
+// prepared bytes rather than encoded again. BSON bytes, not Extended JSON: they keep every type tag, so an int32 and a
+// {"$numberInt": …} document cannot share a fingerprint.
+func filterFingerprint(filter bson.Raw) string {
+	const header = bsonraw.LengthBytes + 3 // the document length, then the type, the key "f" and its terminator
+
+	var fp strings.Builder
+
+	fp.Grow(header + len(filter) + 1)
+
+	var h [header]byte
+	binary.LittleEndian.PutUint32(h[:], uint32(header+len(filter)+1)) //nolint:gosec // a prepared filter is at most 16 MiB
+	h[bsonraw.LengthBytes] = byte(bson.TypeEmbeddedDocument)
+	h[bsonraw.LengthBytes+1] = 'f'
+
+	fp.Write(h[:])
+	fp.Write(filter)
+	fp.WriteByte(0)
+
+	return fp.String()
 }
 
 // encodePosition returns the sort values of doc as a BSON array document, the token payload; a date must be aligned to
@@ -423,7 +522,7 @@ func encodePosition(doc bson.Raw, keys []sortKey, precision time.Duration) ([]by
 
 	payload, err := bson.Marshal(bson.D{{Key: "k", Value: values}})
 	if err != nil {
-		return nil, fmt.Errorf("mongo: encode page position: %w", err)
+		return nil, fmt.Errorf("keyset: encode page position: %w", err)
 	}
 
 	return payload, nil
@@ -431,7 +530,7 @@ func encodePosition(doc bson.Raw, keys []sortKey, precision time.Duration) ([]by
 
 // decodePosition parses a token payload into n sort values.
 func decodePosition(payload []byte, n int) ([]bson.RawValue, error) {
-	invalid := fmt.Errorf("mongo: decode page token: %w", pagetoken.ErrInvalidToken)
+	invalid := fmt.Errorf("keyset: decode page token: %w", pagetoken.ErrInvalidToken)
 
 	raw := bson.Raw(payload)
 	// A signer can supply arbitrary bytes. Require one complete document before
@@ -455,7 +554,10 @@ func decodePosition(payload []byte, n int) ([]bson.RawValue, error) {
 
 // withSeek restricts filter, a marshaled document, to the documents
 // after the position values in the order of keys: (k1 > v1) or (k1 = v1 and
-// k2 > v2) or …, with $lt for descending keys.
+// k2 > v2) or …, with $lt for descending keys. A descending key also matches
+// null and missing values, which sort after every value: $lt alone would skip
+// them, and reading them instead makes a page that ends on one fail with
+// [ErrMissingKey], as an ascending sort does where they sort first.
 func withSeek(filter bson.Raw, keys []sortKey, values []bson.RawValue) bson.D {
 	branches := make(bson.A, 0, len(keys))
 	for i, k := range keys {
@@ -464,12 +566,15 @@ func withSeek(filter bson.Raw, keys []sortKey, values []bson.RawValue) bson.D {
 			branch = append(branch, bson.E{Key: keys[j].field, Value: bson.D{{Key: "$eq", Value: values[j]}}})
 		}
 
-		op := "$gt"
 		if k.desc {
-			op = "$lt"
+			branch = append(branch, bson.E{Key: "$or", Value: bson.A{
+				bson.D{{Key: k.field, Value: bson.D{{Key: "$lt", Value: values[i]}}}},
+				bson.D{{Key: k.field, Value: nil}},
+			}})
+		} else {
+			branch = append(branch, bson.E{Key: k.field, Value: bson.D{{Key: "$gt", Value: values[i]}}})
 		}
 
-		branch = append(branch, bson.E{Key: k.field, Value: bson.D{{Key: op, Value: values[i]}}})
 		branches = append(branches, branch)
 	}
 

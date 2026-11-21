@@ -36,44 +36,46 @@ func BenchmarkOptionalEncode(b *testing.B) {
 }
 
 func BenchmarkDecimalRoundTrip(b *testing.B) {
-	in := struct {
+	type doc struct {
 		Amount decimal.Decimal `bson:"amount"`
-	}{Amount: decimal.RequireFromString("12345.6789")}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		raw, err := marshal(in)
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		var out struct {
-			Amount decimal.Decimal `bson:"amount"`
-		}
-		if err := unmarshal(raw, &out); err != nil {
-			b.Fatal(err)
-		}
 	}
+
+	benchRoundTrip(b, doc{Amount: decimal.RequireFromString("12345.6789")}, new(doc))
 }
 
 func BenchmarkCivilDateRoundTrip(b *testing.B) {
-	in := struct {
+	type doc struct {
 		Day civilDate `bson:"day"`
-	}{Day: civilDate{Year: 2026, Month: 10, Day: 9}}
+	}
+
+	benchRoundTrip(b, doc{Day: civilDate{Year: 2026, Month: 10, Day: 9}}, new(doc))
+}
+
+// benchRoundTrip encodes in and decodes it into out with one registry built before the timer starts, so the codecs are
+// measured rather than the registry construction.
+func benchRoundTrip(b *testing.B, in, out any) {
+	b.Helper()
+
+	reg := testRegistry()
+
+	var buf bytes.Buffer
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		raw, err := marshal(in)
-		if err != nil {
+		buf.Reset()
+
+		enc := bson.NewEncoder(bson.NewDocumentWriter(&buf))
+		enc.SetRegistry(reg)
+
+		if err := enc.Encode(in); err != nil {
 			b.Fatal(err)
 		}
 
-		var out struct {
-			Day civilDate `bson:"day"`
-		}
-		if err := unmarshal(raw, &out); err != nil {
+		dec := bson.NewDecoder(bson.NewDocumentReader(bytes.NewReader(buf.Bytes())))
+		dec.SetRegistry(reg)
+
+		if err := dec.Decode(out); err != nil {
 			b.Fatal(err)
 		}
 	}
