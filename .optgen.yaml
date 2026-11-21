@@ -1,0 +1,22 @@
+# optgen configuration file
+# See: https://github.com/altessa-s/go-optgen (built into bin/ by `make generate`)
+defaults:
+  # Process all struct fields, not just those with opt tags
+  all-fields: true
+
+  # Default struct type name
+  type: options
+
+  # Default output file name
+  output: options_gen.go
+
+  # Format generated files with gofmt only. make generate then runs
+  # golangci-lint fmt over every *_gen.go, which applies the gci import order
+  # of .golangci.yml exactly like make fmt (the standalone gci is not used: it
+  # misfiles standard packages newer than its own list, such as Go 1.27's uuid).
+  # The command runs without a shell: quotes group arguments, shell operators are rejected
+  formatter: gofmt -w {file}
+
+  # Verbose output disabled by default
+  verbose: false
+

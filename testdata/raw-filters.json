@@ -1,0 +1,52 @@
+[
+  {
+    "name": "empty",
+    "bson_hex": "0500000000",
+    "error": ""
+  },
+  {
+    "name": "ordered-literal",
+    "bson_hex": "22000000036d65746100170000001262000200000000000000106100010000000000",
+    "error": ""
+  },
+  {
+    "name": "nested-where",
+    "bson_hex": "2200000003696e6e6572001600000002247768657265000500000074657374000000",
+    "error": "ErrDangerousOperator"
+  },
+  {
+    "name": "nested-function",
+    "bson_hex": "2500000003696e6e65720019000000022466756e6374696f6e000500000074657374000000",
+    "error": "ErrDangerousOperator"
+  },
+  {
+    "name": "nested-accumulator",
+    "bson_hex": "2800000003696e6e6572001c0000000224616363756d756c61746f72000500000074657374000000",
+    "error": "ErrDangerousOperator"
+  },
+  {
+    "name": "javascript",
+    "bson_hex": "110000000d760005000000746573740000",
+    "error": "ErrValueType"
+  },
+  {
+    "name": "symbol",
+    "bson_hex": "110000000e760005000000746573740000",
+    "error": "ErrValueType"
+  },
+  {
+    "name": "raw-array-of-documents",
+    "bson_hex": "1c000000047600140000000330000c000000106e002a000000000000",
+    "error": ""
+  },
+  {
+    "name": "trailing-byte",
+    "bson_hex": "050000000000",
+    "error": "ErrMalformedRaw"
+  },
+  {
+    "name": "wrong-length",
+    "bson_hex": "0600000000",
+    "error": "ErrMalformedRaw"
+  }
+]

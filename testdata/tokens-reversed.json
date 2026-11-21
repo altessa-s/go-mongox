@@ -1,0 +1,7 @@
+{
+  "filter_hex": "22000000036d65746100170000001262000200000000000000106100010000000000",
+  "payload_hex": "1f000000046b0017000000103000070000001231002a000000000000000000",
+  "sort_binding": "\"rank\":-1;\"identity.seq\":1;",
+  "subject_binding": "fixture-reader/precision=1ms",
+  "token": "AQAAAZt8qYyIOGikWHUvlru-MGz7geDmiEKmR3CJJvZYmiZvbiJrA1aNrUhOU3xAdszeJeyOzibAHx8AAAAEawAXAAAAEDAABwAAABIxACoAAAAAAAAAAACp6NqoGTIGZpzF5aZqCXaxwaEnhUeyh5veIwk8XG4QcA"
+}

@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+builds:
+  - skip: true
+
+changelog:
+  sort: asc
+  use: github
+  format: "{{ .Message }}"
+  groups:
+    # Subjects are anchored at the start so a type named later in the
+    # subject (docs: explain feat!: syntax) does not decide the group; an
+    # entry lands in the first group whose regexp matches.
+    - title: Breaking Changes
+      regexp: '^[a-z]+(\([^)]+\))?!:'
+      order: 0
+    - title: Features
+      regexp: '^feat(\([^)]+\))?:'
+      order: 1
+    - title: Bug Fixes
+      regexp: '^fix(\([^)]+\))?:'
+      order: 2
+    - title: Performance
+      regexp: '^perf(\([^)]+\))?:'
+      order: 3
+    - title: Refactoring
+      regexp: '^refactor(\([^)]+\))?:'
+      order: 4
+    - title: Documentation
+      regexp: '^docs(\([^)]+\))?:'
+      order: 5
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      # Non-breaking ci, chore and test commits only; a breaking one (chore!:)
+      # stays in the notes under Breaking Changes.
+      - '^(ci|chore|test)(\([^)]*\))?:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: altessa-s
+    name: go-mongox
+  prerelease: auto
+  name_template: "{{.Tag}}"
