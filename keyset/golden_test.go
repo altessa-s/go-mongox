@@ -38,10 +38,7 @@ func TestHistoricalTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	binding, err := newBindings(canonical, keys, "fixture-reader/precision=1ms")
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := newBindings(canonical, keys, "fixture-reader/precision=1ms")
 
 	for _, order := range []string{"sorted", "reversed"} {
 		data, err := os.ReadFile("../testdata/tokens-" + order + ".json")
@@ -65,10 +62,7 @@ func TestHistoricalTokens(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		original, err := newBindings(historical, keys, binding.Subject)
-		if err != nil {
-			t.Fatal(err)
-		}
+		original := newBindings(historical, keys, binding.Subject)
 
 		if original.Sort != fixture.Sort || original.Subject != fixture.Subject {
 			t.Fatal("historical bindings changed")

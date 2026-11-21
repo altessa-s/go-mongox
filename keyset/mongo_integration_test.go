@@ -131,7 +131,7 @@ func TestMongoPageTraversal(t *testing.T) {
 	q.After = ""
 
 	q.Projection = bson.D{{Key: "rank", Value: 0}}
-	if _, err := keyset.FindPage[bson.Raw](t.Context(), coll, codec, q); !errors.Is(err, keyset.ErrMissingKey) {
+	if _, err := keyset.FindPage[bson.Raw](t.Context(), coll, codec, q); !errors.Is(err, keyset.ErrProjection) {
 		t.Fatalf("projection: %v", err)
 	}
 
@@ -141,6 +141,72 @@ func TestMongoPageTraversal(t *testing.T) {
 	var decode *keyset.DecodeError
 	if !errors.As(err, &decode) || !errors.Is(err, pagetoken.ErrInvalidToken) {
 		t.Fatalf("decoder failure: %v", err)
+	}
+}
+
+// TestMongoDescendingNulls checks that a descending sort reaches the documents whose sort field is null or missing, which sort
+// last: returned when they end the read, refused with ErrMissingKey when a page ends on one, never skipped.
+func TestMongoDescendingNulls(t *testing.T) {
+	t.Parallel()
+
+	coll := collection(t, options.Client())
+
+	codec, err := pagetoken.New(bytes.Repeat([]byte{9}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docs := []bson.D{
+		{{Key: "g", Value: "tail"}, {Key: "_id", Value: int32(1)}, {Key: "rank", Value: int32(3)}},
+		{{Key: "g", Value: "tail"}, {Key: "_id", Value: int32(2)}, {Key: "rank", Value: int32(2)}},
+		{{Key: "g", Value: "tail"}, {Key: "_id", Value: int32(3)}, {Key: "rank", Value: int32(1)}},
+		{{Key: "g", Value: "tail"}, {Key: "_id", Value: int32(4)}},
+		{{Key: "g", Value: "many"}, {Key: "_id", Value: int32(5)}, {Key: "rank", Value: int32(1)}},
+		{{Key: "g", Value: "many"}, {Key: "_id", Value: int32(6)}, {Key: "rank", Value: nil}},
+		{{Key: "g", Value: "many"}, {Key: "_id", Value: int32(7)}},
+		{{Key: "g", Value: "many"}, {Key: "_id", Value: int32(8)}},
+	}
+	for _, doc := range docs {
+		if _, err := coll.InsertOne(t.Context(), doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	q := keyset.Query{Filter: bson.D{{Key: "g", Value: "tail"}}, Sort: bson.D{{Key: "rank", Value: -1}}, Limit: 2}
+
+	var ids []int32
+
+	for range 3 {
+		page, err := keyset.FindPage[bson.Raw](t.Context(), coll, codec, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, row := range page.Items {
+			ids = append(ids, row.Lookup("_id").Int32())
+		}
+
+		if page.Next == "" {
+			break
+		}
+
+		q.After = page.Next
+	}
+
+	if !slices.Equal(ids, []int32{1, 2, 3, 4}) {
+		t.Fatalf("the document without rank must be read last: %v", ids)
+	}
+
+	q = keyset.Query{Filter: bson.D{{Key: "g", Value: "many"}}, Sort: bson.D{{Key: "rank", Value: -1}}, Limit: 1}
+
+	page, err := keyset.FindPage[bson.Raw](t.Context(), coll, codec, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	q.After = page.Next
+	if _, err := keyset.FindPage[bson.Raw](t.Context(), coll, codec, q); !errors.Is(err, keyset.ErrMissingKey) {
+		t.Fatalf("a page ending on a null rank: %v", err)
 	}
 }
 
