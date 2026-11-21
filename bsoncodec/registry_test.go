@@ -287,3 +287,47 @@ func TestDecodeErrorPreservesValue(t *testing.T) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }
+
+// TestBSONRoundTrip_PointerToOptional checks that a *Optional[T] mirrors the encoder: nil and an absent Optional store null,
+// which decodes to nil, also over a pointer that was set; a present value decodes into a present Optional.
+func TestBSONRoundTrip_PointerToOptional(t *testing.T) {
+	t.Parallel()
+
+	type doc struct {
+		Value *optional.Optional[int] `bson:"value"`
+	}
+
+	some := optional.Some(5)
+	none := optional.None[int]()
+
+	for name, tc := range map[string]struct {
+		in      doc
+		wantNil bool
+	}{
+		"nil":  {in: doc{}, wantNil: true},
+		"none": {in: doc{Value: &none}, wantNil: true},
+		"some": {in: doc{Value: &some}},
+	} {
+		raw, err := marshal(tc.in)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		stale := optional.Some(9)
+		out := doc{Value: &stale}
+
+		if err := unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := out.Value == nil; got != tc.wantNil {
+			t.Fatalf("%s: decoded nil = %v, want %v", name, got, tc.wantNil)
+		}
+
+		if !tc.wantNil {
+			if v, ok := out.Value.Get(); !ok || v != 5 {
+				t.Fatalf("%s: decoded %v, %v", name, v, ok)
+			}
+		}
+	}
+}

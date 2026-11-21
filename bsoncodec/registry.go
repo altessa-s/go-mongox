@@ -16,6 +16,10 @@ import (
 // define: every optional.Optional[T] (its value, or null), decimal.Decimal and decimal.NullDecimal (exact Decimal128) and the
 // go-atlas-core civil.Date (a "YYYY-MM-DD" string). Install it on the client (options.Client().SetRegistry) so documents are
 // stored with the same codecs as filters. Configure additional codecs with [RegisterDateType] before concurrent use.
+//
+// Null decodes into an absent Optional[T], a nil pointer, an invalid decimal.NullDecimal — and into a decimal.Decimal as zero,
+// which cannot tell null from 0: declare a field that may hold null as decimal.NullDecimal, *decimal.Decimal or
+// optional.Optional[decimal.Decimal].
 func NewRegistry() *bson.Registry {
 	defaults := bson.NewRegistry()
 	// Obtain the standard structural hooks from a separate registry so their
@@ -64,12 +68,23 @@ func optionalCodecEncoder(enc bson.ValueEncoder) bson.ValueEncoderFunc {
 }
 
 // optionalCodecDecoder decodes null into an absent Optional[T] and any other value
-// into a present one (allocating a nil *Optional[T]), and hands every other
-// ValueUnmarshaler to the standard hook dec.
+// into a present one, and hands every other ValueUnmarshaler to the standard hook
+// dec. A *Optional[T] mirrors the encoder: null sets it to nil, any other value
+// decodes into the Optional it points to, allocated when nil.
 func optionalCodecDecoder(dec bson.ValueDecoder) bson.ValueDecoderFunc {
 	return func(dc bson.DecodeContext, vr bson.ValueReader, value reflect.Value) error {
 		v := value
 		if v.Kind() == reflect.Pointer && optional.IsOptionalType(v.Type().Elem()) {
+			if vr.Type() == bson.TypeNull {
+				if err := vr.ReadNull(); err != nil {
+					return err
+				}
+
+				v.SetZero()
+
+				return nil
+			}
+
 			if v.IsNil() {
 				v.Set(reflect.New(v.Type().Elem()))
 			}
