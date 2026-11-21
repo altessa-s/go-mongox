@@ -87,6 +87,9 @@ jobs:
           cache-dependency-path: "**/go.sum"
 
       - name: Run tests
+        # Include the live cursor and index paths in the coverage floor.
+        env:
+          GOFLAGS: -tags=integration
         # Runs each directory of the Makefile's MODULES and merges the
         # profiles into coverage.out.
         run: make coverage

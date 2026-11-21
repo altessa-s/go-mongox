@@ -6,9 +6,9 @@ package indexes_test
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
@@ -47,9 +47,7 @@ func TestEnsureRejectsInvalidModels(t *testing.T) {
 			t.Parallel()
 
 			err := indexes.Ensure(t.Context(), nil, tc.models)
-			if !errors.Is(err, indexes.ErrInvalidIndexModels) {
-				t.Fatalf("got %v, want %v", err, indexes.ErrInvalidIndexModels)
-			}
+			require.ErrorIs(t, err, indexes.ErrInvalidIndexModels)
 		})
 	}
 }
@@ -58,9 +56,7 @@ func TestEnsureRejectsInvalidModels(t *testing.T) {
 func TestEnsureWithoutModels(t *testing.T) {
 	t.Parallel()
 
-	if err := indexes.Ensure(t.Context(), nil, nil); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, indexes.Ensure(t.Context(), nil, nil))
 }
 
 // TestNames resolves explicit names and the names the driver generates from int32, int64 and string key values.
@@ -72,13 +68,8 @@ func TestNames(t *testing.T) {
 		{Keys: bson.D{{Key: "b", Value: int32(1)}, {Key: "c", Value: int64(-1)}}},
 		{Keys: bson.D{{Key: "body", Value: "text"}}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if want, got := []string{"idx_a", "b_1_c_-1", "body_text"}, names; !reflect.DeepEqual(want, got) {
-		t.Fatalf("got %#v, want %#v", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, []string{"idx_a", "b_1_c_-1", "body_text"}, names)
 }
 
 func TestNamesPreservesSetterFailure(t *testing.T) {
@@ -89,7 +80,6 @@ func TestNamesPreservesSetterFailure(t *testing.T) {
 	builder.Opts = append(builder.Opts, func(*mongooptions.IndexOptions) error { return cause })
 
 	_, err := indexes.Names([]mongo.IndexModel{{Options: builder}})
-	if !errors.Is(err, cause) || !errors.Is(err, indexes.ErrInvalidIndexModels) {
-		t.Fatalf("setter failure: %v", err)
-	}
+	require.ErrorIs(t, err, cause)
+	require.ErrorIs(t, err, indexes.ErrInvalidIndexModels)
 }

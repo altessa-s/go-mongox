@@ -1,3 +1,5 @@
+//go:build integration
+
 // Copyright 2021-2026 ALTESSA SOLUTIONS INC.
 // Use of this source code is governed by the MIT license that can be found in
 // the LICENSE file.
@@ -46,7 +48,7 @@ func collection(t *testing.T, opts *options.ClientOptions) *mongo.Collection {
 	coll := client.Database("go_mongox_it").Collection(bson.NewObjectID().Hex())
 
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 		defer cancel()
 
 		if err := coll.Drop(ctx); err != nil {

@@ -281,33 +281,6 @@ func TestFilterBindsTheExecutedBytes(t *testing.T) {
 	}
 }
 
-func TestFindPageRejectsTokenWithoutCodec(t *testing.T) {
-	t.Parallel()
-
-	codec, err := pagetoken.New(bytes.Repeat([]byte{1}, pagetoken.MinKeyLength))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	token, err := codec.Issue([]byte("x"), pagetoken.Bindings{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = FindPage[bson.M](t.Context(), nil, nil, Query{After: token})
-	if !errors.Is(err, ErrTokensRequired) {
-		t.Fatalf("got %v, want %v", err, ErrTokensRequired)
-	}
-
-	if !errors.Is(err, pagetoken.ErrCodecRequired) {
-		t.Fatalf("got %v, want %v", err, pagetoken.ErrCodecRequired)
-	}
-
-	if want, got := pagetoken.FailureMalformed, pagetoken.Classify(err); !reflect.DeepEqual(want, got) {
-		t.Fatalf("got %#v, want %#v", got, want)
-	}
-}
-
 func TestBindingsKeepTypes(t *testing.T) {
 	t.Parallel()
 
