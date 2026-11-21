@@ -20,3 +20,25 @@ func BenchmarkPrepare(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkPrepareRaw(b *testing.B) {
+	raw, err := bson.Marshal(bson.D{
+		{Key: "tenant", Value: "acme"},
+		{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{"open", "pending", "closed"}}}},
+		{Key: "$or", Value: bson.A{
+			bson.D{{Key: "owner", Value: "alice"}},
+			bson.D{{Key: "score", Value: bson.D{{Key: "$gte", Value: int32(10)}, {Key: "$lt", Value: int32(20)}}}},
+		}},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := bsonfilter.Prepare(b.Context(), bson.Raw(raw), nil, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

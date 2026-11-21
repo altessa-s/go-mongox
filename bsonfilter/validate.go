@@ -40,31 +40,31 @@ const cancelCheckInterval = 1024
 
 var (
 	// ErrDangerousOperator identifies a filter containing a server-side JavaScript operator.
-	ErrDangerousOperator = errors.New("mongo: filter contains a dangerous MongoDB operator")
+	ErrDangerousOperator = errors.New("bsonfilter: filter contains a dangerous MongoDB operator")
 	// ErrValueType identifies a filter value whose Go type, or raw BSON type, is not one [Validate] admits.
-	ErrValueType = errors.New("mongo: filter value type is not admitted")
+	ErrValueType = errors.New("bsonfilter: filter value type is not admitted")
 )
 
 // ErrTooDeep fails a filter nested beyond [maxFilterNesting].
-var ErrTooDeep = errors.New("mongo: filter nesting exceeds validation limit")
+var ErrTooDeep = errors.New("bsonfilter: filter nesting exceeds validation limit")
 
 // ErrTooLarge fails a filter larger than [maxFilterNodes] values or [maxFilterBytes] variable-size bytes, expanded as the
 // encoding repeats them, or holding raw BSON larger than [maxFilterBytes].
-var ErrTooLarge = errors.New("mongo: filter size exceeds validation limit")
+var ErrTooLarge = errors.New("bsonfilter: filter size exceeds validation limit")
 
 // errDecimalTooLarge fails a decimal whose coefficient is beyond [decimal128.MaxCoefficientBits] bits: encoding it would take time
 // proportional to its size before any byte is written, which the encoded size bound cannot stop.
 var errDecimalTooLarge = fmt.Errorf("%w: decimal coefficient beyond %d bits", ErrTooLarge, decimal128.MaxCoefficientBits)
 
 // ErrMalformedRaw fails raw BSON that is not well formed.
-var ErrMalformedRaw = errors.New("mongo: filter holds malformed raw BSON")
+var ErrMalformedRaw = errors.New("bsonfilter: filter holds malformed raw BSON")
 
 // dangerousFilterOperators is the deny-list of MongoDB query operators
 // that execute server-side JavaScript (or otherwise have a well-known
 // abuse path) and therefore must never appear in a filter built from
 // untrusted input. The list is intentionally narrow — perf-only hazards
 // like $regex stay allowed; only operators that grant attacker-controlled
-// code execution on the database are blocked.
+// code execution on the database are blocked. Every entry starts with "$", which [rawKey] relies on.
 var dangerousFilterOperators = coremaps.NewImmutableMap(map[string]struct{}{
 	"$where":       {}, // arbitrary JavaScript evaluated server-side
 	"$function":    {}, // user-defined JavaScript inside aggregations / $expr
