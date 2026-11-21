@@ -2,6 +2,8 @@ module github.com/altessa-s/go-mongox
 
 go 1.27.0
 
+toolchain go1.27.4
+
 require (
 	github.com/altessa-s/go-aip v0.1.8
 	github.com/altessa-s/go-atlas-core v0.3.5
