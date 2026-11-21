@@ -30,10 +30,11 @@ const (
 
 var (
 	// ErrMalformed fails raw BSON that is not well formed: a length beyond the bytes that hold it or below its own header, a string
-	// or a key without its terminator, a document that does not end where its length says, an unknown type.
-	ErrMalformed = errors.New("malformed raw BSON")
+	// or a key without its terminator, a document that does not end where its length says, a boolean other than 0 or 1, an unknown
+	// type.
+	ErrMalformed = errors.New("bsonraw: malformed raw BSON")
 	// ErrTooDeep fails raw BSON that holds more documents open at once than the bound [Walk] is given.
-	ErrTooDeep = errors.New("raw BSON nests too deep")
+	ErrTooDeep = errors.New("bsonraw: raw BSON nests too deep")
 )
 
 // Visit is called by [Walk] for every element of every document and array, before its value is read: depth is the number of
@@ -43,7 +44,8 @@ type Visit func(depth int, t bson.Type, key []byte) error
 
 // Walk checks that data is exactly one well-formed BSON value of type t: every length within the bytes that hold it and not below
 // its own header, every string, key and regular expression terminated, every document and array (the scope of a code with scope
-// included) ending with its terminator where its length says, an old binary repeating its length, and no unknown type. It holds
+// included) ending with its terminator where its length says, an old binary repeating its length, every boolean 0 or 1, and no
+// unknown type. It holds
 // at most maxDepth documents open at once (an array and a scope count as documents), failing with [ErrTooDeep] beyond; any other
 // defect fails with [ErrMalformed]. visit, which may be nil, is called for every element. Walk reads data once, without recursion,
 // in time linear in its length.
@@ -196,6 +198,10 @@ func (s *scanner) skip(t bson.Type, end int) error {
 	switch t {
 	case bson.TypeUndefined, bson.TypeNull, bson.TypeMinKey, bson.TypeMaxKey:
 	case bson.TypeBoolean:
+		if s.pos >= end || s.data[s.pos] > 1 {
+			return ErrMalformed
+		}
+
 		n = 1
 	case bson.TypeInt32:
 		n = LengthBytes
