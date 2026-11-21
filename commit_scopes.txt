@@ -1,11 +1,22 @@
-bsonbound
-bsoncodec
-bsonfilter
-bsonraw
-indexes
-keyset
-devtools
-ci
-deps
-README
-docs
+# Commit Scopes for go-mongox
+# Use these scopes in conventional commits: type(scope): description
+# The scope is optional: omit it for repository-wide changes. Never use `root`.
+# Only the first word of a non-comment line is a scope.
+# Example: fix(keyset): bind tokens to the prepared filter
+
+# Repository scopes
+deps                        # Dependency updates (Dependabot writes build(deps): bump ...)
+README                      # Root README
+docs                        # Documentation
+
+# Packages
+bsonbound                   # Bounds BSON encoding by byte size, nesting depth and evaluator budget
+bsoncodec                   # Registers BSON codecs for optional values, exact decimals and civil dates
+bsonfilter                  # Validates filters and prepares ordered BSON for execution
+bsonraw                     # Walks raw BSON and checks element boundaries
+indexes                     # Resolves index names and creates indexes
+keyset                      # Reads signed keyset pages from MongoDB collections
+
+# Tooling
+devtools                    # Development tool dependencies
+ci                          # GitHub Actions workflows and scripts

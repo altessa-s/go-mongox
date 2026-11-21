@@ -7,6 +7,7 @@ package bsoncodec_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -456,5 +457,35 @@ func TestDateTypeValidRulePointerReceiver(t *testing.T) {
 
 	if want, got := 2026, out.D.Year; want != got {
 		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// TestCivilDateStoredForm checks the stored form against the zero-padded YYYY-MM-DD layout across the year range and every
+// month and day width, and that it decodes back to the same date.
+func TestCivilDateStoredForm(t *testing.T) {
+	t.Parallel()
+
+	reg := testRegistry()
+
+	for _, year := range []int{0, 1, 9, 10, 99, 100, 999, 1000, 2026, 9999} {
+		for _, month := range []time.Month{time.January, time.September, time.October, time.December} {
+			for _, day := range []int{1, 9, 10, 28} {
+				d := civilDate{Year: year, Month: month, Day: day}
+
+				raw := marshalReg(t, reg, period{From: d})
+				if got, want := raw.Lookup("from").StringValue(), fmt.Sprintf("%04d-%02d-%02d", year, int(month), day); got != want {
+					t.Fatalf("%v stored as %q, want %q", d, got, want)
+				}
+
+				var out period
+				if err := unmarshalReg(t, reg, raw, &out); err != nil {
+					t.Fatal(err)
+				}
+
+				if out.From != d {
+					t.Fatalf("%v decoded as %v", d, out.From)
+				}
+			}
+		}
 	}
 }

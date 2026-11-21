@@ -24,3 +24,20 @@ func BenchmarkMarshal(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkMarshalLargeArray(b *testing.B) {
+	ids := make(bson.A, 1000)
+	for i := range ids {
+		ids[i] = int32(i)
+	}
+
+	doc := bson.D{{Key: "id", Value: bson.D{{Key: "$in", Value: ids}}}}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := bsonbound.Marshal(doc, 16<<20, 128, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

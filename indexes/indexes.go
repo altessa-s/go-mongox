@@ -19,7 +19,7 @@ import (
 )
 
 // ErrInvalidIndexModels is returned by [Ensure] for models whose names collide or whose keys a name cannot be derived from.
-var ErrInvalidIndexModels = errors.New("mongo: invalid index models")
+var ErrInvalidIndexModels = errors.New("indexes: invalid index models")
 
 // operationError hides index specifications and partial filter values in server and codec errors.
 type operationError struct {
@@ -35,10 +35,12 @@ func (e operationError) Unwrap() error { return e.cause }
 // keys or options, or the same keys under another name) fails it with the server's error, which is never resolved by dropping
 // an index.
 //
-// A model without a name gets the name the driver would give it (keys joined as "field_1_other_-1"). Models must have distinct
-// names ([ErrInvalidIndexModels]).
+// The keys of every model are encoded once, with the driver's default registry, and those bytes are both the source of the
+// name and the keys sent to the server, so a codec of the collection cannot make them differ. A model without a name gets the
+// name the driver would give those keys ("field_1_other_-1"). Models must have distinct names and keys that encode to a
+// non-empty document ([ErrInvalidIndexModels]).
 func Ensure(ctx context.Context, coll *mongo.Collection, models []mongo.IndexModel) error {
-	names, err := Names(models)
+	names, keys, err := resolve(models)
 	if err != nil {
 		return err
 	}
@@ -47,36 +49,45 @@ func Ensure(ctx context.Context, coll *mongo.Collection, models []mongo.IndexMod
 		return nil
 	}
 
-	if _, err = coll.Indexes().CreateMany(ctx, namedModels(models, names)); err != nil {
+	if _, err = coll.Indexes().CreateMany(ctx, namedModels(models, names, keys)); err != nil {
 		return operationError{"indexes: create indexes failed", err}
 	}
 
 	return nil
 }
 
-// Names resolves the name of every model and checks they are distinct.
+// Names resolves the name of every model, as [Ensure] does, and checks they are distinct.
 func Names(models []mongo.IndexModel) ([]string, error) {
+	names, _, err := resolve(models)
+
+	return names, err
+}
+
+// resolve encodes the keys of every model and resolves its name from them, checking the names are distinct.
+func resolve(models []mongo.IndexModel) ([]string, []bson.Raw, error) {
 	names := make([]string, len(models))
+	keys := make([]bson.Raw, len(models))
 
 	for i, model := range models {
-		name, err := modelName(model)
+		name, raw, err := modelName(model)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if slices.Contains(names[:i], name) {
-			return nil, fmt.Errorf("%w: duplicate index name %q", ErrInvalidIndexModels, name)
+			return nil, nil, fmt.Errorf("%w: duplicate index name %q", ErrInvalidIndexModels, name)
 		}
 
-		names[i] = name
+		names[i], keys[i] = name, raw
 	}
 
-	return names, nil
+	return names, keys, nil
 }
 
-// namedModels returns copies of models carrying their resolved names in options of their own: the driver writes the name into a
-// model's options builder, which would race when callers share one model slice across goroutines (a package-level var).
-func namedModels(models []mongo.IndexModel, names []string) []mongo.IndexModel {
+// namedModels returns copies of models carrying their encoded keys and their resolved names in options of their own: the driver
+// writes the name into a model's options builder, which would race when callers share one model slice across goroutines (a
+// package-level var).
+func namedModels(models []mongo.IndexModel, names []string, keys []bson.Raw) []mongo.IndexModel {
 	out := make([]mongo.IndexModel, len(models))
 
 	for i, model := range models {
@@ -85,7 +96,7 @@ func namedModels(models []mongo.IndexModel, names []string) []mongo.IndexModel {
 			opts.Opts = slices.Clone(model.Options.Opts)
 		}
 
-		out[i] = mongo.IndexModel{Keys: model.Keys, Options: opts.SetName(names[i])}
+		out[i] = mongo.IndexModel{Keys: keys[i], Options: opts.SetName(names[i])}
 	}
 
 	return out
@@ -107,30 +118,30 @@ func resolveIndexOptions(model mongo.IndexModel) (mongooptions.IndexOptions, err
 	return args, nil
 }
 
-// modelName is the model's explicit name, or the one the driver generates: every key and its value (an integer or a string)
-// joined by "_".
-func modelName(model mongo.IndexModel) (string, error) {
+// modelName returns the encoded keys of model and its name: the explicit one, or the one the driver generates, every key and
+// its value (an integer or a string) joined by "_".
+func modelName(model mongo.IndexModel) (string, bson.Raw, error) {
 	args, err := resolveIndexOptions(model)
 	if err != nil {
-		return "", operationError{"indexes: invalid index options", errors.Join(ErrInvalidIndexModels, err)}
-	}
-
-	if args.Name != nil {
-		if *args.Name == "" {
-			return "", fmt.Errorf("%w: empty index name", ErrInvalidIndexModels)
-		}
-
-		return *args.Name, nil
+		return "", nil, operationError{"indexes: invalid index options", errors.Join(ErrInvalidIndexModels, err)}
 	}
 
 	keys, err := bson.Marshal(model.Keys)
 	if err != nil {
-		return "", operationError{"indexes: invalid index keys", errors.Join(ErrInvalidIndexModels, err)}
+		return "", nil, operationError{"indexes: invalid index keys", errors.Join(ErrInvalidIndexModels, err)}
 	}
 
 	elems, err := bson.Raw(keys).Elements()
 	if err != nil || len(elems) == 0 {
-		return "", fmt.Errorf("%w: index keys must be a non-empty document", ErrInvalidIndexModels)
+		return "", nil, fmt.Errorf("%w: index keys must be a non-empty document", ErrInvalidIndexModels)
+	}
+
+	if args.Name != nil {
+		if *args.Name == "" {
+			return "", nil, fmt.Errorf("%w: empty index name", ErrInvalidIndexModels)
+		}
+
+		return *args.Name, keys, nil
 	}
 
 	parts := make([]string, 0, 2*len(elems))
@@ -148,11 +159,11 @@ func modelName(model mongo.IndexModel) (string, error) {
 		case bson.TypeString:
 			s = v.StringValue()
 		default:
-			return "", fmt.Errorf("%w: key %q has a %v value", ErrInvalidIndexModels, e.Key(), v.Type)
+			return "", nil, fmt.Errorf("%w: key %q has a %v value", ErrInvalidIndexModels, e.Key(), v.Type)
 		}
 
 		parts = append(parts, e.Key(), s)
 	}
 
-	return strings.Join(parts, "_"), nil
+	return strings.Join(parts, "_"), keys, nil
 }

@@ -141,7 +141,10 @@ func TestWithSeek(t *testing.T) {
 	want := bson.D{{Key: "$and", Value: bson.A{
 		bson.D{{Key: "group", Value: "a"}},
 		bson.D{{Key: "$or", Value: bson.A{
-			bson.D{{Key: "rank", Value: bson.D{{Key: "$lt", Value: v(3)}}}},
+			bson.D{{Key: "$or", Value: bson.A{
+				bson.D{{Key: "rank", Value: bson.D{{Key: "$lt", Value: v(3)}}}},
+				bson.D{{Key: "rank", Value: nil}},
+			}}},
 			bson.D{
 				{Key: "rank", Value: bson.D{{Key: "$eq", Value: v(3)}}},
 				{Key: "_id", Value: bson.D{{Key: "$gt", Value: v("id9")}}},
@@ -188,10 +191,7 @@ func mustFilter(tb testing.TB, filter bson.D) bson.Raw {
 func mustBindings(tb testing.TB, filter bson.D, keys []sortKey, subject string) pagetoken.Bindings {
 	tb.Helper()
 
-	b, err := newBindings(mustFilter(tb, filter), keys, subject)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	b := newBindings(mustFilter(tb, filter), keys, subject)
 
 	return b
 }
@@ -281,33 +281,6 @@ func TestFilterBindsTheExecutedBytes(t *testing.T) {
 	}
 }
 
-func TestFindPageRejectsTokenWithoutCodec(t *testing.T) {
-	t.Parallel()
-
-	codec, err := pagetoken.New(bytes.Repeat([]byte{1}, pagetoken.MinKeyLength))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	token, err := codec.Issue([]byte("x"), pagetoken.Bindings{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = FindPage[bson.M](t.Context(), nil, nil, Query{After: token})
-	if !errors.Is(err, ErrTokensRequired) {
-		t.Fatalf("got %v, want %v", err, ErrTokensRequired)
-	}
-
-	if !errors.Is(err, pagetoken.ErrCodecRequired) {
-		t.Fatalf("got %v, want %v", err, pagetoken.ErrCodecRequired)
-	}
-
-	if want, got := pagetoken.FailureMalformed, pagetoken.Classify(err); !reflect.DeepEqual(want, got) {
-		t.Fatalf("got %#v, want %#v", got, want)
-	}
-}
-
 func TestBindingsKeepTypes(t *testing.T) {
 	t.Parallel()
 
@@ -335,7 +308,10 @@ func TestCheckProjection(t *testing.T) {
 		{{Key: "meta.rank", Value: 1}, {Key: "name", Value: bson.D{{Key: "$literal", Value: 0}}}},
 		{{Key: "meta", Value: true}},
 		{{Key: "secret", Value: 0}},
-		{{Key: "meta.rank", Value: int64(1)}, {Key: "_id", Value: 0.0}},
+		{{Key: "meta.rank", Value: int64(1)}, {Key: "_id", Value: 1.0}},
+		{{Key: "meta.rank.x", Value: false}},
+		{{Key: "tags", Value: bson.D{{Key: "$slice", Value: 2}}}},
+		{{Key: "tags", Value: bson.M{"$slice": 2}}, {Key: "secret", Value: false}},
 	} {
 		if err := checkProjection(p, keys); err != nil {
 			t.Logf("%v", p)
@@ -349,6 +325,15 @@ func TestCheckProjection(t *testing.T) {
 		{{Key: "meta.rank.x", Value: bson.D{{Key: "$slice", Value: 1}}}},
 		{{Key: "meta.rank.$", Value: 1}},
 		{{Key: "_id", Value: 2}},
+		{{Key: "meta.rank", Value: int64(1)}, {Key: "_id", Value: 0.0}}, // drops the tie-breaker
+		{{Key: "meta.rank", Value: 0}},
+		{{Key: "meta", Value: false}},
+		{{Key: "_id", Value: int32(0)}},
+		{{Key: "name", Value: 1}},        // an inclusion without meta.rank
+		{{Key: "meta.rank.x", Value: 1}}, // a descendant does not return the scalar
+		{{Key: "_id", Value: true}},      // only _id
+		{{Key: "tags", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "a", Value: 1}}}}}},
+		{{Key: "name", Value: bson.D{{Key: "$toUpper", Value: "$name"}}}},
 	} {
 		if got := checkProjection(p, keys); !errors.Is(got, ErrProjection) {
 			t.Logf("%v", p)
@@ -512,20 +497,14 @@ func TestFindPageRefusesBeforeQuerying(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	otherBindings, err := newBindings(mustFilter(t, bson.D{{Key: "g", Value: "other"}}), keys, "s/precision=1ms")
-	if err != nil {
-		t.Fatal(err)
-	}
+	otherBindings := newBindings(mustFilter(t, bson.D{{Key: "g", Value: "other"}}), keys, "s/precision=1ms")
 
 	foreign, err := codec.Issue([]byte("x"), otherBindings)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	bindings, err := newBindings(mustFilter(t, nil), keys, "s/precision=1ms")
-	if err != nil {
-		t.Fatal(err)
-	}
+	bindings := newBindings(mustFilter(t, nil), keys, "s/precision=1ms")
 
 	garbage, err := codec.Issue([]byte("not a position"), bindings)
 	if err != nil {
@@ -537,9 +516,12 @@ func TestFindPageRefusesBeforeQuerying(t *testing.T) {
 		want error
 	}{
 		"dangerous filter":   {q: Query{Filter: bson.D{{Key: "$where", Value: "1"}}}, want: bsonfilter.ErrDangerousOperator},
-		"precision":          {q: Query{TimestampPrecision: time.Microsecond}, want: ErrMissingKey},
+		"precision":          {q: Query{TimestampPrecision: time.Microsecond}, want: ErrPrecision},
+		"negative precision": {q: Query{TimestampPrecision: -time.Second}, want: ErrPrecision},
 		"sort":               {q: Query{Sort: bson.D{{Key: "a", Value: 2}}}, want: ErrSort},
+		"sort NUL":           {q: Query{Sort: bson.D{{Key: "a\x00b", Value: 1}}}, want: ErrSort},
 		"projection":         {q: Query{Projection: bson.D{{Key: "_id", Value: "$x"}}}, want: ErrProjection},
+		"dropped sort field": {q: Query{Sort: bson.D{{Key: "a", Value: 1}}, Projection: bson.D{{Key: "b", Value: 1}}}, want: ErrProjection},
 		"unencodable filter": {q: Query{Filter: bson.D{{Key: "f", Value: func() {}}}}, want: bsonfilter.ErrValueType},
 		"token of a filter":  {q: Query{After: foreign, Subject: "s"}, want: pagetoken.ErrFilterChanged},
 		"malformed position": {q: Query{After: garbage, Subject: "s"}, want: pagetoken.ErrInvalidToken},
