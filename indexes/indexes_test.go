@@ -39,6 +39,8 @@ func TestEnsureRejectsInvalidModels(t *testing.T) {
 		{name: "double key value", models: []mongo.IndexModel{{Keys: bson.D{{Key: "a", Value: 1.0}}}}},
 		{name: "empty keys", models: []mongo.IndexModel{{Keys: bson.D{}}}},
 		{name: "keys that do not encode", models: []mongo.IndexModel{{Keys: func() {}}}},
+		{name: "named keys that do not encode", models: []mongo.IndexModel{named("idx", func() {})}},
+		{name: "named empty keys", models: []mongo.IndexModel{named("idx", bson.D{})}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
