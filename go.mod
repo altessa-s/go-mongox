@@ -7,7 +7,7 @@ toolchain go1.27.4
 require (
 	github.com/altessa-s/go-aip v0.1.12
 	github.com/altessa-s/go-atlas-core v0.3.5
-	github.com/shopspring/decimal v1.4.0
+	github.com/shopspring/decimal v1.6.0
 	github.com/stretchr/testify v1.12.1
 	go.mongodb.org/mongo-driver/v2 v2.10.1
 )
