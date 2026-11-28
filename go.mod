@@ -5,7 +5,7 @@ go 1.27.0
 toolchain go1.27.4
 
 require (
-	github.com/altessa-s/go-aip v0.1.8
+	github.com/altessa-s/go-aip v0.1.12
 	github.com/altessa-s/go-atlas-core v0.3.5
 	github.com/shopspring/decimal v1.4.0
 	github.com/stretchr/testify v1.12.1
@@ -13,7 +13,7 @@ require (
 )
 
 require (
-	github.com/altessa-s/go-kryptos v0.1.4 // indirect
+	github.com/altessa-s/go-kryptos v0.1.5 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/xdg-go/scram v1.4.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
